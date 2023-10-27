@@ -1,4 +1,5 @@
 require 'faraday'
+require 'faraday/multipart'
 require 'json'
 
 class JiraIntegration
@@ -270,6 +271,33 @@ class JiraIntegration
     @estimate = JSON.parse(json_data)
   end
 
+  def upload_attach_file(issue_key, file_path)
+    file_name = File.basename(file_path)
+
+    conn = Faraday.new(url: @base_url) do |faraday|
+      faraday.request :multipart
+      faraday.request :url_encoded
+      faraday.adapter :net_http
+    end
+
+    response = conn.post do |req|
+      req.url "/rest/api/3/issue/#{issue_key}/attachments"
+      req.headers['X-Atlassian-Token'] = 'no-check'
+      req.headers['Content-Type'] = 'multipart/form-data'
+      req.headers['Accept'] = 'application/json'
+      req.headers['Authorization'] = "Basic #{Base64.strict_encode64("#{@credentials[:username]}:#{@credentials[:token]}")}"
+      req.body = {
+        file: Faraday::UploadIO.new(file_path, 'application/octet-stream', file_name)
+      }
+    end
+
+    if response.status == 200
+      puts "Attachment uploaded successfully."
+    else
+      puts "Failed to upload attachment. HTTP Response Code: #{response.status}"
+    end
+  end
+
   def process_estimate
     return unless lead_account_id
 
@@ -303,7 +331,8 @@ class JiraIntegration
           end
 
           task_points = task["points"]
-          task_due_on = task["due_on"]  
+          task_due_on = task["due_on"]
+          task_attachments = task["attachments"]
           task_content = []
           
           if task['subtasks'].length > 0
@@ -416,6 +445,10 @@ class JiraIntegration
 
           unless duedate_field_id == false
             update_issue(issue_key, duedate_field_id, task_due_on) unless task_due_on.nil?
+          end
+
+          task_attachments.each do |attachfile|
+            upload_attach_file(issue_key, attachfile)
           end
 
           task['subtasks'].each do |subtask|
