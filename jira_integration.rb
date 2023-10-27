@@ -206,34 +206,60 @@ class JiraIntegration
     end
   end
 
-  def get_screen_id_from_screenscheme(scheme_id)
+  def issue_type_screen_scheme(project_id)
     response = @connection.get do |req|
-      req.url "rest/api/3/screenscheme?id=#{scheme_id}"
+      req.url "/rest/api/3/issuetypescreenscheme/project?projectId=#{project_id}"
       req.headers = @headers
     end
-
+  
     if response.success?
       res = JSON.parse(response.body)
-      screens = res['values']
-      filtered_data = screens.select { |item| item["id"] == scheme_id }
-      puts "Screen Value: #{filtered_data}"
-      if filtered_data.any?
-        filtered_data.first["screens"]["default"]
+      schemes = res['values']
+      if schemes.length > 0
+        schemes.first["issueTypeScreenScheme"]["id"]
       else
         nil
       end
     else
-      puts "#{response.body}"
       nil
     end
   end
-
-  def get_field_id_from_screen_id(screen_id, field_name)
+  
+  def screen_id_from_screen_scheme(scheme_id)
+    startAt = 0
+    maxResults = 25
+    screenschemes = []
+    loop do
+      response = @connection.get do |req|
+        req.url "/rest/api/3/screenscheme?maxResults=#{maxResults}&startAt=#{startAt}&expand=issueTypeScreenSchemes"
+        req.headers = @headers
+      end
+  
+      if response.success?
+        res = JSON.parse(response.body)
+        res_values = res['values']
+        screenschemes.concat(res_values)
+  
+        break if res_values.length < maxResults
+  
+        startAt += maxResults
+      else
+        break
+      end
+    end
+  
+    screenscheme = screenschemes.find do |item|
+      item.dig("issueTypeScreenSchemes", "values").any?{ |value| value.dig("id") == scheme_id }
+    end
+    screenscheme.dig("screens", "default")
+  end
+  
+  def field_id_from_screen_id(screen_id, field_name)
     response = @connection.get do |req|
-      req.url "rrest/api/3/screens/#{screen_id}/availableFields"
+      req.url "/rest/api/3/field"
       req.headers = @headers
     end
-
+  
     if response.success?
       fields = JSON.parse(response.body)
       filtered_data = fields.select { |item| item["name"] == field_name }
@@ -243,29 +269,24 @@ class JiraIntegration
         nil
       end
     else
-      puts "#{response.body}"
       nil
     end
   end
-
-  def get_tab_id_from_screen_id(screen_id)
+  
+  def tab_id_from_screen_id(screen_id)
     response = @connection.get do |req|
-      req.url 'rest/api/3/screens/#{screen_id}/tabs'
+      req.url "/rest/api/3/screens/#{screen_id}/tabs"
       req.headers = @headers
     end
-
+  
     if response.success?
       tabs = JSON.parse(response.body)
-      tab = tabs[0]
-      puts "Success to get the Tab. HTTP Response Code: #{response.status}"
-      puts "Tab: id: #{tab['id']}, name: #{tab['name']}"
-      tab['id']
+      tabs.first['id']
     else
-      puts "#{response.body}"
       nil
     end
   end
-
+  
   def add_field_to_screen_and_tab(screen_id, tab_id, field_id)
     body = {
       fieldId: field_id
@@ -275,20 +296,29 @@ class JiraIntegration
       req.headers = @headers
       req.body = body.to_json
     end
-
-    if response.success?
-      field = JSON.parse(response.body)
-      puts "Field added successfully. id: #{field['id']}, name: #{field['name']}"
-    else
-      puts "#{response.body}"
-    end
+  end
+  
+  def register_field_to_screen(project_id, field_name)
+    issue_type_screen_scheme_id = issue_type_screen_scheme(project_id)
+    return false if issue_type_screen_scheme_id.nil?
+  
+    screen_id = screen_id_from_screen_scheme(issue_type_screen_scheme_id)
+    return false if screen_id.nil?
+  
+    field_id = field_id_from_screen_id(screen_id, field_name)
+    return false if field_id.nil?
+  
+    tab_id = tab_id_from_screen_id(screen_id)
+    return false if tab_id.nil?
+  
+    add_field_to_screen_and_tab(screen_id, tab_id, field_id)
+    field_id
   end
 
-  def update_issue(issue_key, story_point)
+  def update_issue(issue_key, field_id, field_value)
     story_points_data = {
-      fields: {
-        customfield_10034: story_point.to_f
-        # duedate: "2023-11-10"
+      "fields" => {
+        field_id => field_value
       }
     }
 
@@ -297,19 +327,15 @@ class JiraIntegration
       req.headers = @headers
       req.body = story_points_data.to_json
     end
-
-    if response.success?
-      puts "Story Points updated successfully for issue #{issue_key}"
-    else
-      puts "Failed to update Story Points. HTTP Response Code: #{response.status}"
-      puts "Response Body: #{response.body}"
-    end
   end
 
   def process_estimate
     project_id = create_project
-    puts "project_id is #{project_id}."
+
     return if project_id.nil?
+
+    storypoint_field_id = register_field_to_screen(project_id, "Story Points")
+    duedate_field_id = register_field_to_screen(project_id, "Due date")
 
     @estimate.each do |section|
       section_name = valid_label(section["name"], "section_")
@@ -439,7 +465,13 @@ class JiraIntegration
           issue_key = create_issue(issue_data)
           return unless issue_key
 
-          update_issue(issue_key, task_points) unless task_points.nil?
+          unless storypoint_field_id == false
+            update_issue(issue_key, storypoint_field_id, task_points) unless task_points.nil?
+          end
+
+          unless duedate_field_id == false
+            update_issue(issue_key, duedate_field_id, task_due_on) unless task_due_on.nil?
+          end
 
           task['subtasks'].each do |subtask|
             issue_data = {
