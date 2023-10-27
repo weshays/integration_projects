@@ -1,1 +1,38 @@
-A project for integrations
+Service Object for pushing data into Jira stories
+
+- Gems
+
+```
+faraday
+faraday-multipart
+json
+```
+
+- Installation
+
+```
+bundle install --path vendor/bundle
+```
+
+- Credential
+
+```
+credentials = {
+  token: 'xxx',
+  username: 'xxx@xx.xx',
+  domain: 'xxx'
+}
+```
+
+- Project Options
+
+```
+options = {
+  key: 'xxx',
+  name: 'xxx',
+  assigneeType: 'UNASSIGNED', # or 'PROJECT_LEAD',
+  projectTypeKey: 'software',
+  projectTemplateKey: 'com.pyxis.greenhopper.jira:gh-simplified-kanban-classic',
+  description: 'xxx'
+}
+```
