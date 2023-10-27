@@ -25,22 +25,69 @@ class JiraIntegration
   end
 
   private
-
-  def connection
-    @base_url = "https://#{@credentials[:domain]}.atlassian.net"
-    @headers = {
-      'Authorization' => "Basic #{Base64.strict_encode64("#{@credentials[:username]}:#{@credentials[:token]}")}",
-      'Accept' => 'application/json',
-      'Content-Type' => 'application/json'
+  
+  def add_field_to_screen_and_tab(screen_id, tab_id, field_id)
+    body = {
+      fieldId: field_id
     }
-    @connection = Faraday.new(url: @base_url) do |faraday|
-      faraday.adapter Faraday.default_adapter
+    response = @connection.post do |req|
+      req.url "/rest/api/3/screens/#{screen_id}/tabs/#{tab_id}/fields"
+      req.headers = @headers
+      req.body = body.to_json
     end
   end
 
-  def load_estimate
-    json_data = File.read(@estimate_file)
-    @estimate = JSON.parse(json_data)
+  def create_epic(project_id, epic_name)
+    if issue_type_id("Epic").nil?
+      @error = "Can't found Epic id."
+      return
+    end
+    
+    epic_data = {
+      fields: {
+        project: {
+          id: project_id
+        },
+        summary: epic_name,
+        issuetype: {
+          id: issue_type_id("Epic")
+        }
+      },
+      customfield_10011: epic_name
+    }
+
+    response = @connection.post do |req|
+      req.url '/rest/api/3/issue'
+      req.headers = @headers
+      req.body = epic_data.to_json
+    end
+  
+    if response.success?
+      issue = JSON.parse(response.body)
+      puts "Epic created successfully. Issue number: #{issue['id']}, Key: #{issue['key']}"
+      issue['key']
+    else
+      @error = response.body
+      nil
+    end
+  end
+
+  def create_issue(issue_data)
+    response = @connection.post do |req|
+      req.url '/rest/api/3/issue'
+      req.headers = @headers
+      req.body = issue_data.to_json
+    end
+  
+    # Check the response status code
+    if response.success?
+      issue = JSON.parse(response.body)
+      puts "Issue created successfully. Issue number: #{issue['id']}, Key: #{issue['key']}"
+      issue['key']
+    else
+      @error = response.body
+      nil
+    end
   end
 
   def create_project
@@ -62,116 +109,15 @@ class JiraIntegration
     end
   end
 
-  def get_project
-    response = @connection.get do |req|
-      req.url "/rest/api/3/project/#{@options[:key]}"
-      req.headers = @headers
-    end
-
-    if response.success?
-      project = JSON.parse(response.body)
-      project['id']
-    else
-      nil
-    end
-  end
-
-  def valid_label(label_name, prefix)
-    "#{prefix}#{label_name.gsub(',', ' /').gsub(' ', '_')}"
-  end
-
-  def label_list
-    # Send a GET request to retrieve the labels
-    response = @connection.get do |req|
-      req.url "/rest/api/3/label"
-      req.headers = @headers
-    end
-    # Check the response status code
-    labels = []
-  
-    if response.success?
-      response_json = JSON.parse(response.body)
-      labels = response_json['values']
-    end
-    
-    labels
-  end
-
-  def issue_list
-    response = @connection.get do |req|
-      req.url "/rest/api/3/search"
-      req.headers = @headers
-    end
-
-    issues = []
-    if response.success?
-      issue_data = JSON.parse(response.body)      
-      issues = issue_data['issues']
-    end
-
-    issues
-  end
-
-  def lssue_type_list
-    # Send a GET request to retrieve the issue type
-    response = @connection.get do |req|
-      req.url "/rest/api/3/issuetype"
-      req.headers = @headers
-    end
-
-    issue_types = []  
-    if response.success?
-      issue_types = JSON.parse(response.body)
-    end
-    
-    issue_types
-  end
-
-  def issue_type_id(issue_type)
-    filtered_types = lssue_type_list.select do |element|
-      element["name"] == issue_type
-    end
-    
-    if filtered_types.any?
-      filtered_types[0]["id"]
-    else
-      nil
-    end
-  end
-
-  def create_epic(project_id, epic_name)
-    if issue_type_id("Epic").nil?
-      @error = "Can't found Epic id."
-      return
-    end
-    
-    # Create the epic by sending a POST request
-    epic_data = {
-      fields: {
-        project: {
-          id: project_id
-        },
-        summary: epic_name,
-        issuetype: {
-          id: issue_type_id("Epic")
-        }
-      },
-      customfield_10011: epic_name
+  def connection
+    @base_url = "https://#{@credentials[:domain]}.atlassian.net"
+    @headers = {
+      'Authorization' => "Basic #{Base64.strict_encode64("#{@credentials[:username]}:#{@credentials[:token]}")}",
+      'Accept' => 'application/json',
+      'Content-Type' => 'application/json'
     }
-
-    response = @connection.post do |req|
-      req.url '/rest/api/3/issue'
-      req.headers = @headers
-      req.body = epic_data.to_json
-    end
-  
-    # Check the response status code
-    if response.success?
-      issue = JSON.parse(response.body)
-      issue['key']
-    else
-      @error = response.body
-      nil
+    @connection = Faraday.new(url: @base_url) do |faraday|
+      faraday.adapter Faraday.default_adapter
     end
   end
 
@@ -185,73 +131,6 @@ class JiraIntegration
     return issue['key'] if issue
 
     nil
-  end
-
-  def create_issue(issue_data)    
-    # Create the issue by sending a POST request
-    response = @connection.post do |req|
-      req.url '/rest/api/3/issue'
-      req.headers = @headers
-      req.body = issue_data.to_json
-    end
-  
-    # Check the response status code
-    if response.success?
-      issue = JSON.parse(response.body)
-      puts "Issue created successfully. Issue number: #{issue['id']}, Key: #{issue['key']}"
-      issue['key']
-    else
-      @error = response.body
-      nil
-    end
-  end
-
-  def issue_type_screen_scheme(project_id)
-    response = @connection.get do |req|
-      req.url "/rest/api/3/issuetypescreenscheme/project?projectId=#{project_id}"
-      req.headers = @headers
-    end
-  
-    if response.success?
-      res = JSON.parse(response.body)
-      schemes = res['values']
-      if schemes.length > 0
-        schemes.first["issueTypeScreenScheme"]["id"]
-      else
-        nil
-      end
-    else
-      nil
-    end
-  end
-  
-  def screen_id_from_screen_scheme(scheme_id)
-    startAt = 0
-    maxResults = 25
-    screenschemes = []
-    loop do
-      response = @connection.get do |req|
-        req.url "/rest/api/3/screenscheme?maxResults=#{maxResults}&startAt=#{startAt}&expand=issueTypeScreenSchemes"
-        req.headers = @headers
-      end
-  
-      if response.success?
-        res = JSON.parse(response.body)
-        res_values = res['values']
-        screenschemes.concat(res_values)
-  
-        break if res_values.length < maxResults
-  
-        startAt += maxResults
-      else
-        break
-      end
-    end
-  
-    screenscheme = screenschemes.find do |item|
-      item.dig("issueTypeScreenSchemes", "values").any?{ |value| value.dig("id") == scheme_id }
-    end
-    screenscheme.dig("screens", "default")
   end
   
   def field_id_from_screen_id(screen_id, field_name)
@@ -272,64 +151,128 @@ class JiraIntegration
       nil
     end
   end
-  
-  def tab_id_from_screen_id(screen_id)
+
+  def get_project
     response = @connection.get do |req|
-      req.url "/rest/api/3/screens/#{screen_id}/tabs"
+      req.url "/rest/api/3/project/#{@options[:key]}"
       req.headers = @headers
     end
-  
+
     if response.success?
-      tabs = JSON.parse(response.body)
-      tabs.first['id']
+      project = JSON.parse(response.body)
+      project['id']
     else
       nil
     end
   end
-  
-  def add_field_to_screen_and_tab(screen_id, tab_id, field_id)
-    body = {
-      fieldId: field_id
-    }
-    response = @connection.post do |req|
-      req.url "/rest/api/3/screens/#{screen_id}/tabs/#{tab_id}/fields"
+
+  def issue_list
+    response = @connection.get do |req|
+      req.url "/rest/api/3/search"
       req.headers = @headers
-      req.body = body.to_json
     end
-  end
-  
-  def register_field_to_screen(project_id, field_name)
-    issue_type_screen_scheme_id = issue_type_screen_scheme(project_id)
-    return false if issue_type_screen_scheme_id.nil?
-  
-    screen_id = screen_id_from_screen_scheme(issue_type_screen_scheme_id)
-    return false if screen_id.nil?
-  
-    field_id = field_id_from_screen_id(screen_id, field_name)
-    return false if field_id.nil?
-  
-    tab_id = tab_id_from_screen_id(screen_id)
-    return false if tab_id.nil?
-  
-    add_field_to_screen_and_tab(screen_id, tab_id, field_id)
-    field_id
+
+    issues = []
+    if response.success?
+      issue_data = JSON.parse(response.body)      
+      issues = issue_data['issues']
+    end
+
+    issues
   end
 
-  def update_issue(issue_key, field_id, field_value)
-    story_points_data = {
-      "fields" => {
-        field_id => field_value
-      }
-    }
-
-    response = @connection.put do |req|
-      req.url "/rest/api/3/issue/#{issue_key}"
-      req.headers = @headers
-      req.body = story_points_data.to_json
+  def issue_type_id(issue_type)
+    filtered_types = issue_type_list.select do |element|
+      element["name"] == issue_type
     end
+    
+    if filtered_types.any?
+      filtered_types[0]["id"]
+    else
+      nil
+    end
+  end
+
+  def issue_type_list
+    # Send a GET request to retrieve the issue type
+    response = @connection.get do |req|
+      req.url "/rest/api/3/issuetype"
+      req.headers = @headers
+    end
+
+    issue_types = []  
+    if response.success?
+      issue_types = JSON.parse(response.body)
+    end
+    
+    issue_types
+  end
+
+  def issue_type_screen_scheme(project_id)
+    response = @connection.get do |req|
+      req.url "/rest/api/3/issuetypescreenscheme/project?projectId=#{project_id}"
+      req.headers = @headers
+    end
+  
+    if response.success?
+      res = JSON.parse(response.body)
+      schemes = res['values']
+      if schemes.length > 0
+        schemes.first["issueTypeScreenScheme"]["id"]
+      else
+        nil
+      end
+    else
+      nil
+    end
+  end
+
+  def label_list
+    # Send a GET request to retrieve the labels
+    response = @connection.get do |req|
+      req.url "/rest/api/3/label"
+      req.headers = @headers
+    end
+    # Check the response status code
+    labels = []
+  
+    if response.success?
+      response_json = JSON.parse(response.body)
+      labels = response_json['values']
+    end
+    
+    labels
+  end
+
+  def lead_account_id
+    response = @connection.get do |req|
+      req.url '/rest/api/3/users/search'
+      req.headers = @headers
+    end
+
+    if response.success?
+      users = JSON.parse(response.body)
+      filtered_user = users.select { |item| item["accountType"] == "atlassian" }
+      if filtered_user.any?
+        @options[:leadAccountId] = filtered_user.first["accountId"]
+        true
+      else
+        false
+      end
+    else
+      @error = response.body
+      false
+    end
+  end
+
+  def load_estimate
+    json_data = File.read(@estimate_file)
+    @estimate = JSON.parse(json_data)
   end
 
   def process_estimate
+    return unless lead_account_id
+
     project_id = create_project
 
     return if project_id.nil?
@@ -347,7 +290,9 @@ class JiraIntegration
         epic_issue_key = exist_epic(project_id, epic_name)
         if epic_issue_key.nil?
           epic_issue_key = create_epic(project_id, epic_name)
+
           return if epic_issue_key.nil?
+
         end
   
         task_group["tasks"].each do |task|
@@ -504,6 +449,84 @@ class JiraIntegration
       end
     end
   end
+  
+  def register_field_to_screen(project_id, field_name)
+    issue_type_screen_scheme_id = issue_type_screen_scheme(project_id)
+    return false if issue_type_screen_scheme_id.nil?
+  
+    screen_id = screen_id_from_screen_scheme(issue_type_screen_scheme_id)
+    return false if screen_id.nil?
+  
+    field_id = field_id_from_screen_id(screen_id, field_name)
+    return false if field_id.nil?
+  
+    tab_id = tab_id_from_screen_id(screen_id)
+    return false if tab_id.nil?
+  
+    add_field_to_screen_and_tab(screen_id, tab_id, field_id)
+    field_id
+  end
+  
+  def screen_id_from_screen_scheme(scheme_id)
+    startAt = 0
+    maxResults = 25
+    screenschemes = []
+    loop do
+      response = @connection.get do |req|
+        req.url "/rest/api/3/screenscheme?maxResults=#{maxResults}&startAt=#{startAt}&expand=issueTypeScreenSchemes"
+        req.headers = @headers
+      end
+  
+      if response.success?
+        res = JSON.parse(response.body)
+        res_values = res['values']
+        screenschemes.concat(res_values)
+  
+        break if res_values.length < maxResults
+  
+        startAt += maxResults
+      else
+        break
+      end
+    end
+  
+    screenscheme = screenschemes.find do |item|
+      item.dig("issueTypeScreenSchemes", "values").any?{ |value| value.dig("id") == scheme_id }
+    end
+    screenscheme.dig("screens", "default")
+  end
+  
+  def tab_id_from_screen_id(screen_id)
+    response = @connection.get do |req|
+      req.url "/rest/api/3/screens/#{screen_id}/tabs"
+      req.headers = @headers
+    end
+  
+    if response.success?
+      tabs = JSON.parse(response.body)
+      tabs.first['id']
+    else
+      nil
+    end
+  end
+
+  def update_issue(issue_key, field_id, field_value)
+    story_points_data = {
+      "fields" => {
+        field_id => field_value
+      }
+    }
+
+    response = @connection.put do |req|
+      req.url "/rest/api/3/issue/#{issue_key}"
+      req.headers = @headers
+      req.body = story_points_data.to_json
+    end
+  end
+
+  def valid_label(label_name, prefix)
+    "#{prefix}#{label_name.gsub(',', ' /').gsub(' ', '_')}"
+  end
 end
 
 credentials = {
@@ -516,7 +539,6 @@ options = {
   key: 'xxx',
   name: 'xxx',
   assigneeType: 'UNASSIGNED', # or 'PROJECT_LEAD',
-  leadAccountId: 'xxx',
   projectTypeKey: 'software',
   projectTemplateKey: 'com.pyxis.greenhopper.jira:gh-simplified-kanban-classic',
   description: 'xxx'
