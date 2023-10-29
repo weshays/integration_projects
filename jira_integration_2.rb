@@ -176,6 +176,7 @@ class JiraIntegration
         false
       end
     rescue JIRA::HTTPError => e
+      @error = e.response.body
       false
     end
   end
