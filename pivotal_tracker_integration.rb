@@ -30,6 +30,18 @@ class PivotalTrackerIntegration
     @client = TrackerApi::Client.new(token: @credentials[:token])
   end
 
+  def create_epic(project, epic_name)
+    begin
+      epic_data = {
+        name: epic_name
+      }
+      project.create_epic(epic_data)
+    rescue TrackerApi::Errors::ClientError => e
+      @error = e.response[:body]
+      nil
+    end
+  end
+
   def create_project
     exist_project = get_project
     return exist_project unless exist_project.nil?
@@ -39,6 +51,27 @@ class PivotalTrackerIntegration
       @client.project(project['id'])
     rescue TrackerApi::Errors::ClientError => e
       @error = e.response[:body]
+      nil
+    end
+  end
+
+  def create_story(project, story_data)
+    begin
+      project.create_story(story_data)
+    rescue TrackerApi::Errors::ClientError => e
+      @error = e.response[:body]
+      nil
+    end
+  end
+
+  def exist_epic(project, epic_name)
+    begin
+      epics = @client.get("/projects/#{project['id']}/epics").body
+      epics.find do |epic|
+        epic['name'] == epic_name
+      end
+    rescue TrackerApi::Errors::ClientError => e
+      puts "#{e.response[:body]}"
       nil
     end
   end
@@ -57,73 +90,7 @@ class PivotalTrackerIntegration
     @estimate = JSON.parse(json_data)
   end
 
-  def valid_label(label_name, prefix)
-    "#{prefix}#{label_name.gsub(',', ' /')}"
-  end
-
-  def exist_epic(project, epic_name)
-    begin
-      epics = @client.get("/projects/#{project['id']}/epics").body
-      epics.find do |epic|
-        epic['name'] == epic_name
-      end
-    rescue TrackerApi::Errors::ClientError => e
-      puts "#{e.response[:body]}"
-      nil
-    end
-  end
-
-  def create_epic(project, epic_name)
-    begin
-      epic_data = {
-        name: epic_name
-      }
-      project.create_epic(epic_data)
-    rescue TrackerApi::Errors::ClientError => e
-      @error = e.response[:body]
-      nil
-    end
-  end
-
-  def create_story(project, story_data)
-    begin
-      project.create_story(story_data)
-    rescue TrackerApi::Errors::ClientError => e
-      @error = e.response[:body]
-      nil
-    end
-  end
-
-  def story_points
-    points = []
-    @estimate.each do |section|
-      section['task_groups'].each do |task_group|
-        task_group['tasks'].each do |task|
-          if task['points']
-            points << task['points']
-          end
-        end
-      end
-    end
-    points
-  end
-
-  def update_project(project)
-    unless story_points.empty?
-      data = {
-        point_scale_is_custom: true,
-        point_scale: project['point_scale'].split(',').map(&:to_i).concat(story_points).uniq.join(',')
-      }
-      begin
-        @client.put("/projects/#{project['id']}", {body: data})
-        puts "updated the settings of the project."
-      rescue TrackerApi::Errors::ClientError => e
-        puts "#{e.response[:body]}"
-      end
-    end
-  end
-
-  def process_estimate    
+  def process_estimate
     project = create_project
     return if project.nil?
     puts "project: id: #{project['id']}, name: #{project['name']}"
@@ -194,9 +161,56 @@ class PivotalTrackerIntegration
           return unless story
 
           puts "story: id:#{story['id']}, name: #{story['name']}"
+          upload_attachments(story, task_attachments)
         end
       end
     end
+  end
+
+  def story_points
+    points = []
+    @estimate.each do |section|
+      section['task_groups'].each do |task_group|
+        task_group['tasks'].each do |task|
+          if task['points']
+            points << task['points']
+          end
+        end
+      end
+    end
+    points
+  end
+
+  def upload_attachments(story, attachfiles)
+    comment = {
+      text: 'Attach Files:',
+      files: attachfiles
+    }
+    begin
+      story.create_comment(comment)
+      puts "The attached files have been uploaded."
+    rescue TrackerApi::Errors::ClientError => e
+      puts "#{e.response[:body]}"
+    end
+  end
+
+  def update_project(project)
+    unless story_points.empty?
+      data = {
+        point_scale_is_custom: true,
+        point_scale: project['point_scale'].split(',').map(&:to_i).concat(story_points).uniq.sort.join(',')
+      }
+      begin
+        @client.put("/projects/#{project['id']}", {body: data})
+        puts "updated the settings of the project."
+      rescue TrackerApi::Errors::ClientError => e
+        puts "#{e.response[:body]}"
+      end
+    end
+  end
+
+  def valid_label(label_name, prefix)
+    "#{prefix}#{label_name.gsub(',', ' /')}"
   end
 end
 
