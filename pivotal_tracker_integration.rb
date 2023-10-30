@@ -173,7 +173,11 @@ class PivotalTrackerIntegration
 
   def project_membership(project, username)
     member = project.memberships.find {|m| m['person']['username'] == username}
-    member['person']['id']
+    if member
+      member['person']['id']
+    else
+      nil
+    end
   end
 
   def story_points
@@ -191,8 +195,11 @@ class PivotalTrackerIntegration
   end
 
   def update_assignee(project, story, assignee)
+    owner_id = project_membership(project, assignee)
+    return if owner_id.nil?
+
     begin
-      story[:owner_ids] = [project_membership(project, assignee)]
+      story[:owner_ids] = [owner_id]
       story.save
     rescue TrackerApi::Errors::ClientError => e
       puts "#{e.response[:body]}"
@@ -215,7 +222,8 @@ class PivotalTrackerIntegration
   def update_collaborators(project, story, collaborators)
     followers = []
     collaborators.each do |collaborator|
-      followers << project_membership(project, collaborator)
+      follower_id = project_membership(project, collaborator)
+      followers << follower_id unless follower_id.nil?
     end
 
     return if followers.empty?
