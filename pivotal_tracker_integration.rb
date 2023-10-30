@@ -63,7 +63,10 @@ class PivotalTrackerIntegration
 
   def exist_epic(project, epic_name)
     begin
-      project.epics.find {|e| e["name"] == epic_name}
+      epics = @client.get("/projects/#{project['id']}/epics").body
+      epics.find do |epic|
+        epic['name'] == epic_name
+      end
     rescue TrackerApi::Errors::ClientError => e
       puts "#{e.response[:body]}"
       nil
@@ -112,7 +115,7 @@ class PivotalTrackerIntegration
         point_scale: project['point_scale'].split(',').map(&:to_i).concat(story_points).uniq.join(',')
       }
       begin
-        response = @client.put("/projects/#{project['id']}", {body: data}).body
+        @client.put("/projects/#{project['id']}", {body: data})
         puts "updated the settings of the project."
       rescue TrackerApi::Errors::ClientError => e
         puts "#{e.response[:body]}"
@@ -122,8 +125,8 @@ class PivotalTrackerIntegration
 
   def process_estimate    
     project = create_project
-    puts "project id = #{project['id']}"
     return if project.nil?
+    puts "project: id: #{project['id']}, name: #{project['name']}"
     
     update_project(project)
 
@@ -140,6 +143,7 @@ class PivotalTrackerIntegration
 
           return if epic.nil?
         end
+        epic_label = epic['label']['name']
         puts "epic: id: #{epic['id']}, name: #{epic['name']}"
   
         task_group["tasks"].each do |task|
@@ -179,6 +183,7 @@ class PivotalTrackerIntegration
             estimate: task_points,
             story_type: "feature",
             labels: [
+              { name: epic_label },
               { name: section_name },
               { name: group_name }
             ],
