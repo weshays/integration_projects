@@ -123,6 +123,8 @@ class PivotalTrackerIntegration
           task_points = task["points"]
           task_due_on = task["due_on"]
           task_attachments = task["attachments"]
+          task_assignee = task["assignee"]
+          task_collaborators = task["collaborators"]
   
           tasks = []
           if task['subtasks'].length > 0
@@ -142,7 +144,7 @@ class PivotalTrackerIntegration
                 task_content = "#{task_content}#{story['acceptance_criteria']}\n"
               end
             end
-          end
+          end          
 
           story_data = {
             name: task_name,
@@ -161,10 +163,17 @@ class PivotalTrackerIntegration
           return unless story
 
           puts "story: id:#{story['id']}, name: #{story['name']}"
-          upload_attachments(story, task_attachments)
+          upload_attachments(story, task_attachments) unless task_attachments.empty?
+          update_assignee(project, story, task_assignee) unless task_assignee.nil?
+          update_collaborators(project, story, task_collaborators) unless task_collaborators.empty?
         end
       end
     end
+  end
+
+  def project_membership(project, username)
+    member = project.memberships.find {|m| m['person']['username'] == username}
+    member['person']['id']
   end
 
   def story_points
@@ -181,6 +190,15 @@ class PivotalTrackerIntegration
     points
   end
 
+  def update_assignee(project, story, assignee)
+    begin
+      story[:owner_ids] = [project_membership(project, assignee)]
+      story.save
+    rescue TrackerApi::Errors::ClientError => e
+      puts "#{e.response[:body]}"
+    end
+  end
+
   def upload_attachments(story, attachfiles)
     comment = {
       text: 'Attach Files:',
@@ -189,6 +207,22 @@ class PivotalTrackerIntegration
     begin
       story.create_comment(comment)
       puts "The attached files have been uploaded."
+    rescue TrackerApi::Errors::ClientError => e
+      puts "#{e.response[:body]}"
+    end
+  end
+
+  def update_collaborators(project, story, collaborators)
+    followers = []
+    collaborators.each do |collaborator|
+      followers << project_membership(project, collaborator)
+    end
+
+    return if followers.empty?
+
+    begin
+      story[:follower_ids] = followers
+      story.save
     rescue TrackerApi::Errors::ClientError => e
       puts "#{e.response[:body]}"
     end
