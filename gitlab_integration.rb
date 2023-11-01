@@ -185,8 +185,14 @@ class GitlabIntegration
               end
             end
           end
+
+          unless task_attachments.empty?
+            attach_files = upload_attachments(project, task_attachments)
+            task_content = "#{task_content}\n\n#{attach_files}"
+          end
   
           issue_data = {
+            issue_type: 'issue',
             description: task_content, 
             milestone_id: milestone['id'],
             labels: [ section_name, group_name ].join(','),
@@ -203,10 +209,26 @@ class GitlabIntegration
   
           issue = create_issue(project, task_title, issue_data)
           return if issue.nil?
-          puts "issue: id: #{issue['id']}, title: #{issue['title']}"
+          puts "issue: id: #{issue['id']}, title: #{issue['title']}"          
         end
       end
     end
+  end
+
+  def upload_attachments(project, attachfiles)
+    images = []
+    attachfiles.each do |attachfile|
+      begin
+        attach = @client.upload_file(project['id'], attachfile)
+        puts "The file has been uploaded. #{attach['markdown']}"
+        images << attach['markdown']
+      rescue StandardError => e
+        puts "#{e.message}"
+        false
+      end
+    end
+
+    images.join(' ')
   end
 
   def valid_label(label_name, prefix)
